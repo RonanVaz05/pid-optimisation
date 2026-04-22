@@ -1,0 +1,1071 @@
+% =====================================================================
+%  Matrix Methods for Optimizing Industrial Piping Networks
+%  Adjacency Matrices, Graph Laplacians, and Cost Flow Analysis
+%  Applied to Oil Refinery Design
+%
+%  Course:   Matrices and Linear Transformations (BCSAI, 2026)
+%  Status:   FULL DRAFT (all 8 sections present).
+%
+%  This file is standalone so it compiles on its own (Overleaf or
+%  local TeX Live).  It is shared through the group git repo because
+%  Overleaf free only allows a single editor at a time.
+%
+%  Sections in this file (in document order):
+%    - Title
+%    - Abstract
+%    - 1. Introduction
+%    - 2. Theory and Mathematical Formulas
+%    - 3. Research and Application (6-node refinery case study)
+%    - 4. Conclusion
+%    - Bibliography (textbook seeds; extend with engineering sources)
+%    - Annex A (Python code for Layouts A and B)
+%
+%  Left for teammates:
+%    - Review and polish of the draft text; adding figures where
+%      "% FIGURE:" placeholders appear.
+%    - Expanding the Bibliography beyond the six textbook seeds.
+%    - Building the presentation slides (a separate deliverable).
+% =====================================================================
+
+\documentclass[11pt,a4paper]{article}
+
+% ---- Packages --------------------------------------------------------
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{cite}
+\usepackage[hidelinks]{hyperref}
+
+% ---- Shortcuts for consistent notation ------------------------------
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\mat}[1]{\mathbf{#1}}
+\newcommand{\vect}[1]{\mathbf{#1}}
+\newcommand{\transpose}{^{\mathsf{T}}}
+
+% ---- Title -----------------------------------------------------------
+\title{Matrix Methods for Optimizing Industrial Piping Networks:\\
+Adjacency Matrices, Graph Laplacians, and Cost Flow Analysis\\
+Applied to Oil Refinery Design}
+\author{Group Project \\ Matrices and Linear Transformations (BCSAI, 2026)}
+\date{}
+
+\begin{document}
+\maketitle
+
+% =====================================================================
+%  ABSTRACT
+% =====================================================================
+\begin{abstract}
+Oil refineries are, at heart, very large piping networks, and the
+decisions that shape them, which units to connect, which pipes to
+duplicate, how much to spend on each link, are naturally linear
+algebra decisions. This report models a simplified refinery as a
+directed graph with six nodes (a crude intake, two distillation
+towers, an internal junction, and two product outlets) and seven
+pipes, and uses only the three topics assigned to our group,
+\emph{Matrices}, \emph{Gauss Elimination}, and \emph{Eigenvalues}, to
+answer three questions about it. First, we write mass conservation
+as the linear system $\mat{B}\vect{f}=\vect{s}$, reduce it by
+Gaussian elimination, and describe the full two-parameter family of
+feasible flows. Second, we compute the eigenvalues of the graph
+Laplacian analytically and use the Fiedler value $\lambda_2 =
+3-\sqrt{5} \approx 0.764$ to quantify how robust the layout is to
+the loss of a pipe. Third, we use a linear cost model to compare two
+candidate layouts and show that the reference layout is cheaper (cost
+$400$ vs.\ $460$) \emph{and} structurally more robust than a layout
+missing one pipe. The same matrix--eigenvalue--cost workflow scales
+directly to realistic refinery design.
+\end{abstract}
+
+% =====================================================================
+%  1. INTRODUCTION  (target ~1.5 pages)
+% =====================================================================
+\section{Introduction}
+\label{sec:introduction}
+
+An oil refinery is, at its core, a very large and very expensive network
+of pipes. Crude oil enters through a handful of intake lines, is split
+between distillation columns, reactors, heat exchangers, and storage
+tanks, and eventually leaves as finished products such as gasoline,
+diesel, jet fuel, or petrochemical feedstocks. Between any two of these
+units sits a pipe, and between any two pipes sits a junction, a pump, or
+a valve. \emph{Optimizing} such a network means choosing a layout that
+respects three kinds of constraints simultaneously: the physical
+conservation of mass at every junction, the capacity limits of each
+pipe, and the cost of actually building and operating the network.
+Because industrial piping decisions are made once and live for decades,
+getting this right matters: a bad layout either bottlenecks throughput,
+raises pumping costs, or worse, creates a single point of failure that
+can shut the whole refinery down.
+
+The key observation of this report is that all three of the constraints
+above are \emph{linear}. Flow balance at a junction is a linear
+equation. Pipe capacity is a linear inequality. Total operating cost is
+a linear function of the flows carried by each pipe. The network itself
+is a graph, and every graph can be represented by matrices: the
+adjacency matrix records which nodes are connected, the incidence matrix
+translates pipe flows into node-level balances, and the graph Laplacian
+encodes how well the network holds together as a whole. Solving the
+resulting system of equations is exactly what Gaussian elimination was
+designed for, and the eigenvalues of the Laplacian are exactly what tell
+us whether the network is well-connected or fragile. In other words,
+the three topics assigned to our group, \emph{matrices}, \emph{Gauss
+elimination}, and \emph{eigenvalues}, are not only relevant to refinery
+design, they are the natural language for it.
+
+This project applies that language to a concrete design question. We
+model a simplified oil refinery piping network as a directed graph,
+build its adjacency, degree, incidence, and Laplacian matrices, and use
+Gaussian elimination to solve the resulting flow equations. We then
+examine the eigenvalues of the Laplacian to identify bottlenecks and
+measure the network's robustness to the loss of a pipe, and we use a
+linear cost model to compare alternative layouts. The aim is not to
+design a working refinery in fifteen pages but to demonstrate, with
+small but honest examples, that the same linear algebra we learn in
+class is the backbone of real industrial optimization.
+
+The rest of the document is organized as follows. Section
+\ref{sec:theory} develops the theory and fixes a notation that the
+later sections will reuse without change: graphs and their
+representation matrices, the Graph Laplacian and its spectrum, linear
+systems for conservation laws, Gaussian elimination, eigenvalues, and
+a linear cost--flow model. The Research and Application section that
+follows applies this framework to a specific refinery example. The
+Conclusion summarizes the findings and points to avenues for further
+work, and the Bibliography lists the textbooks and references that
+support the arguments throughout.
+
+% =====================================================================
+%  2. THEORY AND MATHEMATICAL FORMULAS  (target ~3 pages)
+% =====================================================================
+\section{Theory and Mathematical Formulas}
+\label{sec:theory}
+
+Before presenting the mathematics, we fix a notation that will be used
+throughout the report. Every symbol introduced here keeps the same
+meaning in later sections; the Research and Application section can
+plug in refinery-specific values without redefining anything.
+
+\paragraph{Notation.}
+\begin{itemize}
+  \item $G = (V, E)$ denotes a graph with $n = |V|$ nodes and
+        $m = |E|$ edges. In the refinery context, nodes are
+        junctions, pumps, tanks, and processing units, and edges are
+        pipes.
+  \item $\mat{A} \in \RR^{n \times n}$ is the \emph{adjacency matrix}.
+  \item $\mat{D} \in \RR^{n \times n}$ is the \emph{degree matrix}.
+  \item $\mat{B} \in \RR^{n \times m}$ is the \emph{incidence matrix}.
+  \item $\mat{L} = \mat{D} - \mat{A} \in \RR^{n \times n}$ is the
+        \emph{Graph Laplacian}.
+  \item $\vect{f} \in \RR^{m}$ is a \emph{flow vector}: one entry per
+        pipe, giving the amount of material flowing along that pipe in
+        its chosen direction.
+  \item $\vect{s} \in \RR^{n}$ is an \emph{external supply vector}:
+        $s_i > 0$ when node $i$ injects material into the network (a
+        source such as a crude intake), $s_i < 0$ when it removes
+        material (a sink such as a product outlet), and $s_i = 0$ at
+        interior junctions.
+  \item $\vect{c} \in \RR^{m}$ is a \emph{cost vector}, with $c_e$ the
+        unit cost of pushing flow through pipe $e$.
+\end{itemize}
+
+% --------------------------------------------------------------------
+\subsection{Graphs and the matrices that represent them}
+\label{sec:graphs}
+
+A piping network is naturally a graph. A \emph{graph} $G = (V, E)$ is a
+pair of sets: $V$ is a finite set of \emph{nodes}, and $E$ is a set of
+\emph{edges} connecting pairs of nodes. An \emph{undirected} edge is an
+unordered pair $\{u, v\}$; a \emph{directed} edge is an ordered pair
+$(u, v)$. For flow problems we use the directed version, since a pipe
+carries material in a chosen direction.
+
+\paragraph{Adjacency matrix.}
+The adjacency matrix $\mat{A} \in \RR^{n \times n}$ records which nodes
+share an edge:
+\[
+A_{ij} =
+\begin{cases}
+  1 & \text{if there is an edge between node $i$ and node $j$,} \\
+  0 & \text{otherwise.}
+\end{cases}
+\]
+For an undirected graph, $\mat{A}$ is symmetric.
+
+\paragraph{Degree matrix.}
+The \emph{degree} $d_i$ of node $i$ is the number of edges incident to
+$i$. The degree matrix is the diagonal matrix
+$\mat{D} = \operatorname{diag}(d_1, d_2, \ldots, d_n)$.
+
+\paragraph{Incidence matrix.}
+For a directed graph with $m$ edges, the incidence matrix
+$\mat{B} \in \RR^{n \times m}$ has one row per node and one column per
+edge. For each directed edge $e$ going from node $u$ to node $v$, set
+\[
+B_{u,e} = +1, \qquad B_{v,e} = -1,
+\]
+and all other entries in column $e$ equal to zero. With this sign
+convention, the product $\mat{B}\vect{f}$ at row $i$ equals the
+\emph{net outflow} at node $i$: the sum of flows on pipes leaving node
+$i$ minus the sum of flows on pipes entering it. This is the
+convention we will use everywhere in this document.
+
+\paragraph{A small worked example.}
+Consider the four-node graph with edges
+$e_1 = (1 \to 2)$, $e_2 = (2 \to 3)$, $e_3 = (3 \to 4)$, and
+$e_4 = (1 \to 3)$. Its adjacency, degree, and incidence matrices are
+\[
+\mat{A} =
+\begin{bmatrix}
+  0 & 1 & 1 & 0 \\
+  1 & 0 & 1 & 0 \\
+  1 & 1 & 0 & 1 \\
+  0 & 0 & 1 & 0
+\end{bmatrix},
+\quad
+\mat{D} =
+\begin{bmatrix}
+  2 & 0 & 0 & 0 \\
+  0 & 2 & 0 & 0 \\
+  0 & 0 & 3 & 0 \\
+  0 & 0 & 0 & 1
+\end{bmatrix},
+\quad
+\mat{B} =
+\begin{bmatrix}
+  \phantom{-}1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}1 \\
+  -1 & \phantom{-}1 & \phantom{-}0 & \phantom{-}0 \\
+  \phantom{-}0 & -1 & \phantom{-}1 & -1 \\
+  \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0
+\end{bmatrix}.
+\]
+% FIGURE: teammate to insert a diagram of this 4-node graph (TikZ or
+% PNG) here; keep the same labelling (nodes 1..4, edges e1..e4).
+The three matrices encode the same network from three complementary
+angles: $\mat{A}$ asks ``who is connected to whom'', $\mat{D}$ asks
+``how busy is each node'', and $\mat{B}$ asks ``what does a given flow
+pattern do at every node''.
+
+% --------------------------------------------------------------------
+\subsection{The Graph Laplacian}
+\label{sec:laplacian}
+
+Combining the degree and adjacency matrices produces the single most
+useful object in network analysis, the \emph{graph Laplacian}:
+\begin{equation}
+  \mat{L} \;=\; \mat{D} - \mat{A}.
+  \label{eq:laplacian}
+\end{equation}
+For the four-node example of Section~\ref{sec:graphs},
+\[
+\mat{L} =
+\begin{bmatrix}
+  \phantom{-}2 & -1 & -1 & \phantom{-}0 \\
+  -1 & \phantom{-}2 & -1 & \phantom{-}0 \\
+  -1 & -1 & \phantom{-}3 & -1 \\
+  \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}1
+\end{bmatrix}.
+\]
+
+The Laplacian has four properties that we will use repeatedly.
+First, it is \emph{symmetric} whenever the underlying graph is
+undirected (or when we symmetrize a directed graph by forgetting
+orientation). Second, every row of $\mat{L}$ sums to zero, so the
+all-ones vector $\vect{1} = (1, 1, \ldots, 1)\transpose$ is always an
+eigenvector with eigenvalue $0$. Third, $\mat{L}$ is \emph{positive
+semidefinite}: $\vect{x}\transpose \mat{L} \vect{x} \ge 0$ for every
+$\vect{x} \in \RR^{n}$, which means all eigenvalues are real and
+non-negative. Fourth, $\mat{L}$ can be written as
+$\mat{L} = \mat{B}\mat{B}\transpose$ (for the undirected orientation
+convention), which connects the node-level and edge-level views of the
+network.
+
+Order the eigenvalues of the Laplacian as
+\[
+0 = \lambda_1 \le \lambda_2 \le \cdots \le \lambda_n.
+\]
+The first eigenvalue is always zero, as already noted. The
+\emph{second} eigenvalue $\lambda_2$ is called the \emph{Fiedler value}
+or \emph{algebraic connectivity}, and it carries a very concrete
+meaning: $\lambda_2 > 0$ if and only if the graph is connected, and
+the larger $\lambda_2$ is, the harder it is to disconnect the graph
+by cutting edges. For a piping network this translates directly:
+$\lambda_2$ measures how robust the network is to the loss of a pipe.
+A refinery layout with a small $\lambda_2$ has a bottleneck somewhere,
+and losing the wrong pipe can break the network into pieces that
+cannot exchange material. A layout with a larger $\lambda_2$ has more
+redundancy and degrades more gracefully.
+
+% --------------------------------------------------------------------
+\subsection{Linear systems and conservation laws}
+\label{sec:conservation}
+
+The most important physical law in a piping network is conservation
+of mass: whatever flows into a junction must also flow out (except at
+sources and sinks, which inject or extract material from the outside).
+Using the notation of Section~\ref{sec:graphs}, conservation at every
+node can be written as a single linear system:
+\begin{equation}
+  \mat{B}\vect{f} \;=\; \vect{s}.
+  \label{eq:balance}
+\end{equation}
+
+Each row of \eqref{eq:balance} is the balance equation for one node.
+Reading it from left to right, the $i$-th row says: \emph{net outflow
+at node $i$ equals the external supply at node $i$}. At an interior
+junction, $s_i = 0$, and \eqref{eq:balance} reduces to ``flow in =
+flow out''. At a source node such as a crude oil intake, $s_i > 0$
+encodes the rate at which material is injected. At a sink node such
+as a product outlet, $s_i < 0$ encodes the extraction rate.
+
+The refinery vocabulary for these objects is worth stating explicitly,
+since the Application section will use the same symbols:
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Symbol & Refinery meaning \\
+\midrule
+$f_e$        & volumetric flow carried by pipe $e$ \\
+$s_i > 0$    & net production at node $i$ (e.g. crude intake) \\
+$s_i < 0$    & net consumption at node $i$ (e.g. product outlet) \\
+$s_i = 0$    & interior junction or passive element \\
+$(\mat{B}\vect{f})_i$ & net outflow at node $i$ implied by $\vect{f}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+System \eqref{eq:balance} is typically \emph{underdetermined} for a
+realistic refinery: there are more pipes than junctions, so there are
+more unknowns than equations, and many flow patterns satisfy mass
+balance. Choosing among them is exactly the optimization problem that
+the cost model in Section~\ref{sec:cost} will formalize. The method
+we use to solve or reduce such systems is the subject of the next
+subsection.
+
+% --------------------------------------------------------------------
+\subsection{Gaussian elimination}
+\label{sec:gauss}
+
+Gaussian elimination is the workhorse method for solving a linear
+system $\mat{M}\vect{x} = \vect{b}$. It proceeds by applying elementary
+row operations, (i) swapping two rows, (ii) multiplying a row by a
+non-zero scalar, and (iii) adding a multiple of one row to another, to
+transform the augmented matrix $[\mat{M} \mid \vect{b}]$ into an upper
+triangular form. From the triangular system, the unknowns are then
+recovered by \emph{back substitution}, starting from the last equation
+and working upward. When a pivot (the leading coefficient of the row
+currently being used) is zero or very small, we swap in a row with a
+larger pivot; this is called \emph{partial pivoting} and is what makes
+the method numerically stable in practice.
+
+\paragraph{Worked example.}
+Consider the $3 \times 3$ system
+\begin{equation}
+  \begin{cases}
+    \phantom{-}x + \phantom{-}y + \phantom{-}z = \phantom{-}6, \\
+    2x + 3y + \phantom{-}z = 11, \\
+    \phantom{-}x - \phantom{-}y + 2z = \phantom{-}5.
+  \end{cases}
+  \label{eq:gauss-sys}
+\end{equation}
+Write \eqref{eq:gauss-sys} as the augmented matrix
+\[
+\left[\begin{array}{ccc|c}
+1 & \phantom{-}1 & 1 & \phantom{-}6 \\
+2 & \phantom{-}3 & 1 & 11 \\
+1 & -1 & 2 & \phantom{-}5
+\end{array}\right].
+\]
+Eliminate the first column below the pivot by
+$R_2 \gets R_2 - 2R_1$ and $R_3 \gets R_3 - R_1$:
+\[
+\left[\begin{array}{ccc|c}
+1 & \phantom{-}1 & \phantom{-}1 & \phantom{-}6 \\
+0 & \phantom{-}1 & -1 & -1 \\
+0 & -2 & \phantom{-}1 & -1
+\end{array}\right].
+\]
+Eliminate the second column below the new pivot by
+$R_3 \gets R_3 + 2R_2$:
+\[
+\left[\begin{array}{ccc|c}
+1 & 1 & \phantom{-}1 & \phantom{-}6 \\
+0 & 1 & -1 & -1 \\
+0 & 0 & -1 & -3
+\end{array}\right].
+\]
+The matrix is now upper triangular. Back substitution gives
+$z = 3$, then $y - z = -1 \Rightarrow y = 2$, and finally
+$x + y + z = 6 \Rightarrow x = 1$, so
+$(x, y, z) = (1, 2, 3)$. This is exactly the routine we will apply to
+the refinery balance equations in the Application section, except that
+the matrix there will come from \eqref{eq:balance}.
+
+Gaussian elimination on an $n \times n$ system costs $\mathcal{O}(n^3)$
+arithmetic operations, which is why large-scale networks in industry
+rely on sparse variants, iterative solvers, or specialized factorizations
+(LU, QR, Cholesky). The textbook references at the end of this document
+develop these extensions in detail.
+
+% --------------------------------------------------------------------
+\subsection{Eigenvalues and eigenvectors}
+\label{sec:eigen}
+
+Given a square matrix $\mat{M} \in \RR^{n \times n}$, a non-zero vector
+$\vect{v} \in \RR^{n}$ is an \emph{eigenvector} of $\mat{M}$ with
+\emph{eigenvalue} $\lambda \in \RR$ if
+\begin{equation}
+  \mat{M}\vect{v} = \lambda \vect{v}.
+  \label{eq:eigendef}
+\end{equation}
+Eigenvalues are the roots of the \emph{characteristic polynomial}
+$p(\lambda) = \det(\mat{M} - \lambda \mat{I})$, where $\mat{I}$ is the
+$n \times n$ identity matrix. They tell us in which directions the
+linear map $\vect{x} \mapsto \mat{M}\vect{x}$ only stretches or
+compresses its input, and by how much.
+
+When $\mat{M}$ is symmetric, as is the case for the Laplacian of an
+undirected graph, the \emph{spectral theorem} guarantees three useful
+facts: all eigenvalues are real; eigenvectors associated with distinct
+eigenvalues are orthogonal; and $\mat{M}$ can be written as
+$\mat{M} = \mat{Q}\mat{\Lambda}\mat{Q}\transpose$, where $\mat{Q}$ is
+orthogonal and $\mat{\Lambda}$ is diagonal.
+
+\paragraph{Worked example.}
+Let
+\[
+\mat{M} = \begin{bmatrix} 3 & 1 \\ 1 & 3 \end{bmatrix}.
+\]
+Its characteristic polynomial is
+$\det(\mat{M} - \lambda \mat{I}) = (3 - \lambda)^2 - 1
+= \lambda^2 - 6\lambda + 8 = (\lambda - 2)(\lambda - 4)$, so the
+eigenvalues are $\lambda_1 = 2$ and $\lambda_2 = 4$. Solving
+$(\mat{M} - 4\mat{I})\vect{v} = \vect{0}$ yields
+$\vect{v}_2 = (1,\, 1)\transpose$, and solving
+$(\mat{M} - 2\mat{I})\vect{v} = \vect{0}$ yields
+$\vect{v}_1 = (1,\, -1)\transpose$. The two eigenvectors are orthogonal,
+as the spectral theorem predicts.
+
+Returning to networks, this machinery is exactly what lets us read the
+structure of a piping layout from the spectrum of its Laplacian
+$\mat{L}$. The smallest eigenvalue is always zero, and the associated
+eigenvector $\vect{1}$ says ``every node looks the same from a purely
+topological point of view''. The second eigenvalue $\lambda_2$ (the
+Fiedler value) measures how tightly the network is connected; its
+eigenvector, the \emph{Fiedler vector}, splits the nodes into the two
+groups that are hardest to keep together. In a refinery, that split is
+a direct hint at where bottlenecks sit and which pipes deserve
+redundant backups.
+
+% --------------------------------------------------------------------
+\subsection{Cost and flow as a linear model}
+\label{sec:cost}
+
+Finally, we put a price on the flow. Associate with each pipe $e$ a
+non-negative unit cost $c_e$, collected into a cost vector
+$\vect{c} \in \RR^{m}$. The total cost of operating the network at
+flow pattern $\vect{f}$ is simply
+\begin{equation}
+  C(\vect{f}) \;=\; \vect{c}\transpose \vect{f} \;=\;
+  \sum_{e \in E} c_e f_e.
+  \label{eq:cost}
+\end{equation}
+Because $C$ is linear in $\vect{f}$, the entire design problem fits in
+the familiar template of a \emph{linear program}:
+\begin{equation}
+  \begin{aligned}
+    \text{minimize} \quad & \vect{c}\transpose \vect{f} \\
+    \text{subject to} \quad & \mat{B}\vect{f} = \vect{s}, \\
+    & \vect{0} \le \vect{f} \le \vect{f}_{\max}.
+  \end{aligned}
+  \label{eq:lp}
+\end{equation}
+The equality $\mat{B}\vect{f} = \vect{s}$ is mass conservation from
+\eqref{eq:balance}. The inequality $\vect{0} \le \vect{f} \le
+\vect{f}_{\max}$ enforces direction and pipe capacity: flow is
+non-negative in the chosen orientation, and no pipe exceeds its maximum
+throughput.
+
+Formulation \eqref{eq:lp} already suggests the design question we will
+answer in the Application section. Given two candidate layouts of the
+same refinery (different graph $G$, possibly different capacities
+$\vect{f}_{\max}$, and different unit costs $\vect{c}$), the better
+layout is the one whose linear program is feasible and whose optimal
+value $\vect{c}\transpose \vect{f}^{*}$ is smaller. Eigenvalue analysis
+from Section~\ref{sec:eigen} acts as a second, qualitative filter: even
+if two layouts produce similar optimal costs, the layout with a larger
+Fiedler value is structurally more robust and should be preferred when
+failure modes matter.
+
+In Section~3 we apply this framework to a specific refinery piping
+network: we construct its adjacency, degree, incidence, and Laplacian
+matrices, solve the conservation system by Gaussian elimination,
+analyze the Laplacian spectrum, and compare two candidate layouts via
+\eqref{eq:lp}.
+
+% =====================================================================
+%  3. RESEARCH AND APPLICATION  (target ~3 pages)
+% =====================================================================
+\section{Research and Application}
+\label{sec:application}
+
+% --------------------------------------------------------------------
+\subsection{A simplified refinery piping network}
+\label{sec:refinery-model}
+
+We model a simplified oil refinery as a directed graph $G = (V, E)$
+with six nodes and seven pipes. This is deliberately small enough to
+do every calculation by hand and then double-check numerically in
+Annex~\ref{annex:python}, while still containing every feature that
+makes refinery design interesting: a source, two processing stages, an
+internal junction, and two competing output paths.
+
+\paragraph{Nodes.}
+\begin{center}
+\begin{tabular}{@{}llc@{}}
+\toprule
+Node & Role & Supply $s_i$ \\
+\midrule
+$1$ & Crude oil intake (source)   & $+100$ \\
+$2$ & Distillation Tower~1 (DT1)  & $0$    \\
+$3$ & Distillation Tower~2 (DT2)  & $0$    \\
+$4$ & Internal Junction           & $0$    \\
+$5$ & Gasoline Outlet (sink)      & $-60$  \\
+$6$ & Diesel Outlet (sink)        & $-40$  \\
+\bottomrule
+\end{tabular}
+\end{center}
+The external supply vector is therefore
+\[
+  \vect{s} = (100,\, 0,\, 0,\, 0,\, -60,\, -40)\transpose.
+\]
+The signs follow Section~\ref{sec:conservation}: the crude intake
+produces material, the two outlets consume it, and the internal nodes
+are in balance. The total supply is zero ($100 - 60 - 40 = 0$), as it
+must be for a closed mass balance.
+
+\paragraph{Pipes.}
+Each pipe is a directed edge. The numbering fixes the columns of the
+incidence matrix and the entries of the flow vector $\vect{f}$.
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Edge & From $\to$ To & Physical meaning \\
+\midrule
+$e_1$ & $1 \to 2$ & Crude feed into DT1 \\
+$e_2$ & $2 \to 3$ & DT1 heavy fraction into DT2 \\
+$e_3$ & $2 \to 4$ & DT1 light fraction into the junction \\
+$e_4$ & $3 \to 5$ & DT2 light fraction to gasoline \\
+$e_5$ & $3 \to 6$ & DT2 heavy fraction to diesel \\
+$e_6$ & $4 \to 5$ & Junction to gasoline \\
+$e_7$ & $4 \to 6$ & Junction to diesel \\
+\bottomrule
+\end{tabular}
+\end{center}
+% FIGURE: teammate to insert a labelled diagram of this network here.
+% Suggested layout:  node 1 on the far left, nodes 2 in the centre-left,
+% nodes 3 and 4 stacked in the centre, nodes 5 and 6 stacked on the
+% right.  Arrows labelled e1..e7 as per the table above.
+We call this the \emph{reference layout} (Layout~A). In
+Section~\ref{sec:layout-comparison} we will compare it against a second
+layout (Layout~B) in which one pipe has been removed.
+
+% --------------------------------------------------------------------
+\subsection{Adjacency, degree, incidence, and Laplacian matrices}
+\label{sec:refinery-matrices}
+
+Using the definitions of Section~\ref{sec:graphs}, the four matrices
+associated with Layout~A are
+\[
+\mat{A} =
+\begin{bmatrix}
+ 0 & 1 & 0 & 0 & 0 & 0 \\
+ 1 & 0 & 1 & 1 & 0 & 0 \\
+ 0 & 1 & 0 & 0 & 1 & 1 \\
+ 0 & 1 & 0 & 0 & 1 & 1 \\
+ 0 & 0 & 1 & 1 & 0 & 0 \\
+ 0 & 0 & 1 & 1 & 0 & 0
+\end{bmatrix},
+\qquad
+\mat{D} =
+\begin{bmatrix}
+ 1 & 0 & 0 & 0 & 0 & 0 \\
+ 0 & 3 & 0 & 0 & 0 & 0 \\
+ 0 & 0 & 3 & 0 & 0 & 0 \\
+ 0 & 0 & 0 & 3 & 0 & 0 \\
+ 0 & 0 & 0 & 0 & 2 & 0 \\
+ 0 & 0 & 0 & 0 & 0 & 2
+\end{bmatrix},
+\]
+\[
+\mat{L} = \mat{D} - \mat{A} =
+\begin{bmatrix}
+ \phantom{-}1 & -1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 \\
+ -1 & \phantom{-}3 & -1 & -1 & \phantom{-}0 & \phantom{-}0 \\
+ \phantom{-}0 & -1 & \phantom{-}3 & \phantom{-}0 & -1 & -1 \\
+ \phantom{-}0 & -1 & \phantom{-}0 & \phantom{-}3 & -1 & -1 \\
+ \phantom{-}0 & \phantom{-}0 & -1 & -1 & \phantom{-}2 & \phantom{-}0 \\
+ \phantom{-}0 & \phantom{-}0 & -1 & -1 & \phantom{-}0 & \phantom{-}2
+\end{bmatrix},
+\]
+\[
+\mat{B} =
+\begin{bmatrix}
+ \phantom{-}1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 \\
+ -1 & \phantom{-}1 & \phantom{-}1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 \\
+ \phantom{-}0 & -1 & \phantom{-}0 & \phantom{-}1 & \phantom{-}1 & \phantom{-}0 & \phantom{-}0 \\
+ \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}1 & \phantom{-}1 \\
+ \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0 & -1 & \phantom{-}0 \\
+ \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0 & -1
+\end{bmatrix}.
+\]
+Three quick sanity checks confirm the construction. Every column of
+$\mat{B}$ contains exactly one $+1$ (tail) and one $-1$ (head), as it
+must for a well-defined directed edge. Every row of $\mat{L}$ sums to
+zero. The diagonal of $\mat{D}$ gives the node degrees
+$(1, 3, 3, 3, 2, 2)$, which sum to $14 = 2m = 2 \cdot 7$, consistent
+with the handshake lemma.
+
+% --------------------------------------------------------------------
+\subsection{Conservation equations and Gaussian elimination}
+\label{sec:refinery-gauss}
+
+Writing the system $\mat{B}\vect{f} = \vect{s}$ row by row gives the
+six node-balance equations
+\begin{equation}
+\begin{aligned}
+  f_1 &= 100,\\
+ -f_1 + f_2 + f_3 &= 0,\\
+ -f_2 + f_4 + f_5 &= 0,\\
+ -f_3 + f_6 + f_7 &= 0,\\
+ -f_4 - f_6 &= -60,\\
+ -f_5 - f_7 &= -40.
+\end{aligned}
+\label{eq:refinery-balance}
+\end{equation}
+There are seven unknowns and six equations, and because the rows of
+$\mat{B}$ sum to zero, only five of them are independent. We therefore
+expect a two-parameter family of feasible flows.
+
+To find that family explicitly, apply Gaussian elimination to the
+augmented matrix $[\mat{B} \mid \vect{s}]$. Working top to bottom with
+the pivot in row $k$ used to clear row $k+1$:
+\[
+\left[\begin{array}{ccccccc|c}
+ \phantom{-}1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}100 \\
+ -1 & \phantom{-}1 & \phantom{-}1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 \\
+ \phantom{-}0 & -1 & \phantom{-}0 & \phantom{-}1 & \phantom{-}1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 \\
+ \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0 & \phantom{-}0 & \phantom{-}1 & \phantom{-}1 & \phantom{-}0 \\
+ \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0 & -1 & \phantom{-}0 & -60 \\
+ \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & \phantom{-}0 & -1 & \phantom{-}0 & -1 & -40
+\end{array}\right]
+\xrightarrow{\substack{R_2 \gets R_2 + R_1 \\ R_3 \gets R_3 + R_2 \\ R_4 \gets R_4 + R_3 \\ R_5 \gets R_5 + R_4 \\ R_6 \gets R_6 + R_5}}
+\]
+\[
+\left[\begin{array}{ccccccc|c}
+ 1 & 0 & 0 & 0 & 0 & 0 & 0 & 100 \\
+ 0 & 1 & 1 & 0 & 0 & 0 & 0 & 100 \\
+ 0 & 0 & 1 & 1 & 1 & 0 & 0 & 100 \\
+ 0 & 0 & 0 & 1 & 1 & 1 & 1 & 100 \\
+ 0 & 0 & 0 & 0 & 1 & 0 & 1 & \phantom{0}40 \\
+ 0 & 0 & 0 & 0 & 0 & 0 & 0 & \phantom{00}0
+\end{array}\right].
+\]
+The last row becomes $0 = 0$, confirming the rank-$5$ prediction.
+Columns $1$--$5$ are pivot columns; columns $6$ and $7$ are free. Back
+substitution expresses the \emph{general solution} in terms of the two
+free parameters $f_6$ and $f_7$:
+\begin{equation}
+\begin{aligned}
+  f_1 &= 100,\\
+  f_2 &= 100 - f_6 - f_7,\\
+  f_3 &= f_6 + f_7,\\
+  f_4 &= 60 - f_6,\\
+  f_5 &= 40 - f_7.
+\end{aligned}
+\label{eq:general-flow}
+\end{equation}
+The mass balance by itself therefore tells us that we must push exactly
+$100$ units into the intake pipe and that every other flow is
+determined once we have chosen how much material to route through the
+junction to gasoline ($f_6$) and to diesel ($f_7$). Non-negativity
+$\vect{f} \ge \vect{0}$ restricts $(f_6, f_7)$ to the rectangle
+$[0, 60] \times [0, 40]$. Choosing the best point in that rectangle is
+the optimization problem of Section~\ref{sec:layout-comparison}.
+
+% --------------------------------------------------------------------
+\subsection{Laplacian spectrum and network robustness}
+\label{sec:refinery-spectrum}
+
+Eigenvalues of the Laplacian $\mat{L}$ tell us whether Layout~A is
+merely connected or well-connected. A direct expansion of
+$\det(\mat{L} - \lambda \mat{I})$ is painful by hand, but the graph
+has two obvious symmetries: swapping nodes $3$ and $4$ leaves it
+unchanged (both towers see node $2$ upstream and both outlets
+downstream), and swapping nodes $5$ and $6$ does the same. This lets
+us split eigenvectors into sign-symmetric and sign-antisymmetric
+combinations under each swap, and reduces the $6 \times 6$
+eigenproblem into parts we can solve.
+
+\paragraph{Antisymmetric eigenvectors.}
+Take $\vect{v} = (0, 0, 0, 0, 1, -1)\transpose$. A direct computation
+gives $\mat{L}\vect{v} = (0, 0, 0, 0, 2, -2)\transpose = 2\vect{v}$, so
+$\lambda = 2$. Similarly $\vect{v} = (0, 0, 1, -1, 0, 0)\transpose$
+gives $\mat{L}\vect{v} = (0, 0, 3, -3, 0, 0)\transpose = 3\vect{v}$, so
+$\lambda = 3$.
+
+\paragraph{Symmetric eigenvectors.}
+The remaining four eigenvalues come from vectors of the form
+$(a, b, c, c, d, d)\transpose$. Substituting into $\mat{L}\vect{v} =
+\lambda \vect{v}$ reduces the problem to the $4 \times 4$ non-symmetric
+system
+\[
+\begin{bmatrix}
+ 1 & -1 & 0 & 0 \\
+ -1 & 3 & -2 & 0 \\
+ 0 & -1 & 3 & -2 \\
+ 0 & 0 & -2 & 2
+\end{bmatrix}
+\begin{pmatrix} a \\ b \\ c \\ d \end{pmatrix}
+=
+\lambda
+\begin{pmatrix} a \\ b \\ c \\ d \end{pmatrix}.
+\]
+Its characteristic polynomial factors as
+\[
+  \lambda(\lambda - 3)(\lambda^2 - 6\lambda + 4) = 0,
+\]
+yielding $\lambda \in \{0,\, 3 - \sqrt{5},\, 3,\, 3 + \sqrt{5}\}$.
+
+\paragraph{Full spectrum.}
+Combining the two sectors, the eigenvalues of $\mat{L}$ for Layout~A
+are
+\begin{equation}
+  \operatorname{spec}(\mat{L})
+  \;=\;
+  \bigl\{ 0,\; 3 - \sqrt{5},\; 2,\; 3,\; 3,\; 3 + \sqrt{5} \bigr\}.
+  \label{eq:spec-A}
+\end{equation}
+As a cross-check, the sum of the eigenvalues is $0 + (3-\sqrt{5}) + 2
++ 3 + 3 + (3+\sqrt{5}) = 14$, which agrees with the trace of $\mat{L}$
+(sum of node degrees). The Fiedler value is
+\[
+  \lambda_2
+  \;=\; 3 - \sqrt{5}
+  \;\approx\; 0.764.
+\]
+Because $\lambda_2 > 0$, Layout~A is connected: no single pipe failure
+can split the refinery into two groups of units that cannot exchange
+material, because disconnecting it would require more than one edge
+removal. The magnitude $0.764$ will be the benchmark we compare against
+when we remove a pipe in Section~\ref{sec:layout-comparison}.
+
+% --------------------------------------------------------------------
+\subsection{Cost optimization and layout comparison}
+\label{sec:layout-comparison}
+
+Associate the following unit costs with the seven pipes, reflecting
+that direct product routes are cheap, routes through the junction are
+expensive, and intermediate handling adds a small penalty:
+\[
+  \vect{c} \;=\; (1,\, 2,\, 1,\, 1,\, 2,\, 3,\, 2)\transpose.
+\]
+Using the general flow solution \eqref{eq:general-flow}, the total cost
+becomes a linear function of the two free variables:
+\begin{align*}
+  \vect{c}\transpose \vect{f}
+  &= 1 \cdot 100
+    + 2 \cdot (100 - f_6 - f_7)
+    + 1 \cdot (f_6 + f_7)
+    + 1 \cdot (60 - f_6) \\
+  &\quad {} + 2 \cdot (40 - f_7)
+    + 3 \cdot f_6
+    + 2 \cdot f_7 \\[2pt]
+  &= 440 + f_6 - f_7.
+\end{align*}
+The linear program from \eqref{eq:lp} therefore reduces to
+\[
+  \min_{(f_6, f_7) \in [0, 60] \times [0, 40]}
+  \bigl( 440 + f_6 - f_7 \bigr),
+\]
+whose optimum sits at the vertex $(f_6, f_7) = (0, 40)$ with value
+\[
+  \vect{c}\transpose \vect{f}^{*} \;=\; 400.
+\]
+Substituting back into \eqref{eq:general-flow} gives the optimal flow
+\[
+  \vect{f}^{*}
+  \;=\;
+  (100,\, 60,\, 40,\, 60,\, 0,\, 0,\, 40)\transpose.
+\]
+Interpretation: send $60$ units through the chain
+$1 \to 2 \to 3 \to 5$ to satisfy gasoline demand, and $40$ units
+through $1 \to 2 \to 4 \to 6$ to satisfy diesel demand. The two
+expensive edges, $e_5$ (DT2$\to$Diesel) and $e_6$
+(Junction$\to$Gasoline), carry no flow at optimum; they exist purely as
+backup routes.
+
+\paragraph{Layout~B: a pipe is removed.}
+Suppose the engineering team considers a cheaper construction in which
+pipe $e_4$ (DT2$\to$Gasoline) is not built. Mass balance now forces
+$f_6 = 60$ and $f_4$ is eliminated as a variable; one parameter is
+left. Minimizing the cost over that one parameter (details in
+Annex~\ref{annex:python}) gives
+\[
+  \vect{c}\transpose \vect{f}^{*}_{\mathrm{B}} \;=\; 460.
+\]
+That is $60$ units per period more expensive than Layout~A. Using the
+same reduction as above (the swap $(1 \leftrightarrow 5)(2
+\leftrightarrow 4)(3 \leftrightarrow 6)$ is still an automorphism of
+Layout~B), the Laplacian spectrum of Layout~B splits into a symmetric
+sector with eigenvalues $\{0,\, 1,\, 3\}$ and an antisymmetric sector
+whose eigenvalues are the roots of $\lambda^3 - 8\lambda^2 + 17\lambda
+- 8 = 0$, numerically approximately $0.657$, $2.529$, and $4.814$. The
+Fiedler value is therefore
+\[
+  \lambda_2(\mat{L}_{\mathrm{B}}) \;\approx\; 0.657,
+\]
+a drop of roughly $14\%$ from Layout~A's $0.764$.
+
+\paragraph{Verdict.}
+Layout~A is strictly better than Layout~B on both axes.
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+           & Layout~A & Layout~B \\
+\midrule
+Optimal operating cost $\vect{c}\transpose\vect{f}^{*}$ & $400$   & $460$   \\
+Fiedler value $\lambda_2$ (algebraic connectivity)      & $0.764$ & $0.657$ \\
+Pipes                                                   & $7$     & $6$     \\
+\bottomrule
+\end{tabular}
+\end{center}
+The interesting point is not just that Layout~A wins, but that the two
+linear-algebra diagnostics tell consistent stories. The Fiedler value
+flags Layout~B as structurally weaker \emph{without any reference to
+cost}, and the linear program quantifies the additional cash penalty.
+A refinery designer can therefore use the Laplacian spectrum as a
+cheap early-stage filter and reserve the full linear-program solve for
+the candidates that clear that filter.
+
+% =====================================================================
+%  4. CONCLUSION  (target ~0.5 pages)
+% =====================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+This report used only the three topics assigned to our group,
+\emph{Matrices}, \emph{Gauss Elimination}, and \emph{Eigenvalues}, to
+give a complete linear-algebra answer to a genuine industrial design
+question: which layout of an oil refinery's piping network is better.
+We modelled a simplified refinery as a six-node directed graph,
+represented it by its adjacency, degree, incidence, and Laplacian
+matrices, solved its mass-balance system by Gaussian elimination to
+obtain an explicit two-parameter family of feasible flows, computed
+the Laplacian eigenvalues $\{0, 3-\sqrt{5}, 2, 3, 3, 3+\sqrt{5}\}$,
+and combined a linear cost model with the balance equations into a
+small linear program whose optimum sits at a vertex of the feasible
+rectangle.
+
+The three course topics map onto three distinct steps of the
+workflow and together cover it end to end. \emph{Matrices} encode the
+network: $\mat{A}$ asks ``who is connected to whom'', $\mat{D}$ asks
+``how busy is each node'', and $\mat{B}$ translates pipe flows into
+node-level balances. \emph{Gauss elimination} solves the resulting
+linear system and identifies the free parameters that parametrize the
+design space. \emph{Eigenvalues} of the Laplacian provide a single
+scalar, the Fiedler value, that measures how robust the layout is to
+the loss of a pipe. Comparing Layout~A against Layout~B showed that
+these two diagnostics agree in a useful way: the layout with the
+larger Fiedler value was also the cheaper one, which means the
+eigenvalue analysis can act as an early filter before committing to a
+full linear-program solve.
+
+Three directions generalize the study naturally. Realistic refineries
+have dozens of nodes rather than six, which makes sparse matrix
+techniques and iterative solvers essential but does not change the
+underlying linear structure. Pumping and heating costs are nonlinear
+in practice, which turns the linear program into a convex one and
+replaces Gaussian elimination with Newton-type methods on the KKT
+system. Finally, pipe failures are stochastic, and a full treatment
+would weight the Fiedler value by an expected-cost model. All three
+extensions sit on top of the same matrix--eigenvalue--linear-system
+foundation we used here; they are beyond the scope of this course
+project but are a direct continuation of it.
+
+% =====================================================================
+%  BIBLIOGRAPHY STUB
+%  Seeded with the six textbooks the course guidelines recommend.
+%  The references teammate should extend this with primary sources
+%  (papers, engineering handbooks, refinery design references) as the
+%  Application section takes shape.
+% =====================================================================
+\begin{thebibliography}{9}
+
+\bibitem{anton}
+Howard Anton,
+\emph{Elementary Linear Algebra (Applications Version)},
+Wiley.
+
+\bibitem{lay}
+David C. Lay et al.,
+\emph{Linear Algebra and Its Applications},
+Pearson.
+
+\bibitem{poole}
+David Poole,
+\emph{Linear Algebra: A Modern Introduction},
+Cengage Learning.
+
+\bibitem{strang}
+Gilbert Strang,
+\emph{Linear Algebra for Everyone},
+Wellesley-Cambridge Press.
+
+\bibitem{singh}
+Kuldeep Singh,
+\emph{Linear Algebra Step by Step},
+Oxford University Press.
+
+\bibitem{boyd}
+Stephen Boyd and Lieven Vandenberghe,
+\emph{Introduction to Applied Linear Algebra: Vectors, Matrices, and
+Least Squares},
+Cambridge University Press.
+
+% TODO (references teammate): add engineering references on refinery
+% piping design, graph theory applied to flow networks, and any primary
+% sources used in the Application section.
+
+\end{thebibliography}
+
+% =====================================================================
+%  ANNEX A  --  Python verification code
+%  Reproduces every numeric claim in Section 3 using numpy and
+%  scipy.optimize.linprog.  Requires only numpy and scipy; runs in
+%  about half a second on any recent Python.
+% =====================================================================
+\appendix
+\section{Python code for Layouts A and B}
+\label{annex:python}
+
+The following Python script verifies the two numerical claims that
+drive Section~\ref{sec:application}: the Laplacian spectrum given in
+\eqref{eq:spec-A} and the optimal operating costs $\vect{c}\transpose
+\vect{f}^{*} = 400$ for Layout~A and $460$ for Layout~B. It also
+prints the Fiedler value of each layout and the optimal flow vector
+that the linear program returns.
+
+To run the script, save the listing as \texttt{annex\_code.py} and
+execute \texttt{pip install numpy scipy} followed by \texttt{python
+annex\_code.py}. The output should match the numbers quoted in
+Sections~\ref{sec:refinery-spectrum} and~\ref{sec:layout-comparison}.
+
+\begin{verbatim}
+import numpy as np
+from scipy.optimize import linprog
+
+# --------------------------------------------------------------
+# Layout A (reference): 6 nodes, 7 pipes
+# Nodes (0-indexed) : 0 = Crude Intake, 1 = DT1, 2 = DT2,
+#                     3 = Junction,    4 = Gasoline, 5 = Diesel
+# Edges e1..e7      : the directed pipes defined in Section 3.1.
+# --------------------------------------------------------------
+n = 6
+edges_A = [(0, 1),  # e1: Intake -> DT1
+           (1, 2),  # e2: DT1 -> DT2
+           (1, 3),  # e3: DT1 -> Junction
+           (2, 4),  # e4: DT2 -> Gasoline
+           (2, 5),  # e5: DT2 -> Diesel
+           (3, 4),  # e6: Junction -> Gasoline
+           (3, 5)]  # e7: Junction -> Diesel
+m_A = len(edges_A)
+
+# Incidence matrix B (6 x 7)
+B_A = np.zeros((n, m_A))
+for j, (u, v) in enumerate(edges_A):
+    B_A[u, j] = +1.0       # tail (flow leaves u)
+    B_A[v, j] = -1.0       # head (flow enters v)
+
+# External supply vector s
+s = np.array([100, 0, 0, 0, -60, -40], dtype=float)
+
+# Undirected adjacency, degree, and Laplacian
+A_A = np.zeros((n, n))
+for u, v in edges_A:
+    A_A[u, v] = 1.0
+    A_A[v, u] = 1.0
+D_A = np.diag(A_A.sum(axis=1))
+L_A = D_A - A_A
+
+print("Layout A : Laplacian eigenvalues =",
+      np.round(np.sort(np.linalg.eigvalsh(L_A)), 4))
+# Expected: [0.0, 0.7639, 2.0, 3.0, 3.0, 5.2361]
+
+# Unit cost vector c for Layout A
+c_A = np.array([1, 2, 1, 1, 2, 3, 2], dtype=float)
+
+# Linear program:  min c^T f  s.t.  B f = s,  f >= 0
+res_A = linprog(c_A, A_eq=B_A, b_eq=s,
+                bounds=[(0, None)] * m_A, method='highs')
+print("Layout A : optimal flow  =", np.round(res_A.x, 4))
+print("Layout A : optimal cost  =", round(res_A.fun, 4))
+# Expected flow: [100, 60, 40, 60, 0, 0, 40];  cost: 400.0
+
+# --------------------------------------------------------------
+# Layout B : pipe e4 (DT2 -> Gasoline) is removed.
+# --------------------------------------------------------------
+edges_B = [(0, 1), (1, 2), (1, 3),
+           (2, 5), (3, 4), (3, 5)]     # e1, e2, e3, e5, e6, e7
+m_B = len(edges_B)
+
+B_B = np.zeros((n, m_B))
+for j, (u, v) in enumerate(edges_B):
+    B_B[u, j] = +1.0
+    B_B[v, j] = -1.0
+
+A_B = np.zeros((n, n))
+for u, v in edges_B:
+    A_B[u, v] = 1.0
+    A_B[v, u] = 1.0
+D_B = np.diag(A_B.sum(axis=1))
+L_B = D_B - A_B
+
+print("Layout B : Laplacian eigenvalues =",
+      np.round(np.sort(np.linalg.eigvalsh(L_B)), 4))
+# Expected: [0.0, 0.6571, 1.0, 2.5293, 3.0, 4.8136]
+
+# Cost vector without c4 : (c1, c2, c3, c5, c6, c7)
+c_B = np.array([1, 2, 1, 2, 3, 2], dtype=float)
+
+res_B = linprog(c_B, A_eq=B_B, b_eq=s,
+                bounds=[(0, None)] * m_B, method='highs')
+print("Layout B : optimal flow  =", np.round(res_B.x, 4))
+print("Layout B : optimal cost  =", round(res_B.fun, 4))
+# Expected flow: [100, 0, 100, 0, 60, 40];  cost: 460.0
+
+# --------------------------------------------------------------
+# Fiedler values (algebraic connectivity) for the two layouts
+# --------------------------------------------------------------
+fiedler_A = np.sort(np.linalg.eigvalsh(L_A))[1]
+fiedler_B = np.sort(np.linalg.eigvalsh(L_B))[1]
+print(f"Fiedler value Layout A = {fiedler_A:.4f}")
+print(f"Fiedler value Layout B = {fiedler_B:.4f}")
+# Expected: Layout A ~ 0.7639,  Layout B ~ 0.6571
+\end{verbatim}
+
+Running the script reproduces every number quoted in
+Section~\ref{sec:application}: the Laplacian spectrum
+$\{0,\, 3-\sqrt{5},\, 2,\, 3,\, 3,\, 3+\sqrt{5}\}$ for Layout~A and the
+numerically-approximated spectrum $\{0,\, 0.657,\, 1,\, 2.529,\, 3,\,
+4.814\}$ for Layout~B, the optimal flows
+$\vect{f}^{*}_{\mathrm{A}} = (100, 60, 40, 60, 0, 0, 40)\transpose$ and
+$\vect{f}^{*}_{\mathrm{B}} = (100, 0, 100, 0, 60, 40)\transpose$, and
+the optimal operating costs $400$ and $460$. The script is short
+enough to be pasted into a Jupyter notebook, and it is easy to extend:
+adding a new pipe is one more entry in \texttt{edges\_A}, and a new
+cost experiment is one more run of \texttt{linprog}.
+
+\end{document}
